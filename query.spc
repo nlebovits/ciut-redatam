@@ -1,0 +1,1 @@
+table t1 as frequency PERSONA.CONDACT by RADIO.IDRADIO
