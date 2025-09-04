@@ -4,3 +4,6 @@
 .Ruserdata
 
 RADIOS_2022_V2025-1/
+
+# Ignore parquet files
+*.parquet
