@@ -2,26 +2,21 @@
 
 🚧 **Trabajo en Progreso** - Los datos provienen de fuentes oficiales del censo pero no han sido completamente verificados. Se agradecen contribuciones para verificación, mantenimiento y mejoras.
 
-## Fuentes de Datos
-
-- **Datos Censales**: [Instituto Nacional de Estadística y Censos (INDEC)](https://www.indec.gob.ar/indec/web/Institucional-Indec-BasesDeDatos-6)
-- **Límites Geográficos**: [CONICET Digital](https://ri.conicet.gov.ar/handle/11336/149711)
-- **Herramientas R**: [redatamx](https://ideasybits.github.io/redatamx4r/index.html)
-- **Alternativas Futuras**: [open-redatam](https://github.com/litalbarkai/open-redatam)
-
 ## Descripción General
 
-Este repositorio tiene como propósito procesar los datos del censo argentino de 2022 para convertirlos de un formato menos útil (archivos Redatam Equis - REDATAM-X) a un formato más accesible y utilizable. El procesamiento extrae todas las variables de la base de datos Redatam y las convierte a archivos Geoparquet, que actualmente se almacenan en un bucket público de AWS.
+Este repositorio convierte y centraliza los diversos archivos de datos del censo argentino de 2022 desde archivos REDATAM-X y un shapefile a un conjunto único de archivos Parquet almacenados en la nube para facilitar el acceso.
 
 ## Pasos de Procesamiento
 
-El procesamiento es sencillo y consta de los siguientes pasos:
+El procesamiento se realizó usando [redatamx](https://ideasybits.github.io/redatamx4r/index.html) con los siguientes pasos:
 
-1. **Extracción de datos**: Se extraen los datos de la base de datos Redatam
+1. **Extracción de datos**: Se descargaron los datos desde [INDEC](https://www.indec.gob.ar/indec/web/Institucional-Indec-BasesDeDatos-6) y se extrajeron de la base de datos REDATAM
 2. **Conversión a tres archivos**:
    - **Archivo de metadatos**: Contiene los nombres de las columnas del conjunto de datos principal y los códigos que les corresponden
    - **Conjunto de datos principal**: Archivo en formato largo con las siguientes columnas (estructura detallada a continuación)
-   - **Archivo de radios censales**: Contiene los radios censales de 2022 con información de descarga
+   - **Archivo de radios censales**: Contiene los radios censales de 2022 descargados desde [CONICET](https://ri.conicet.gov.ar/handle/11336/149711) con información geográfica
+
+*También estamos explorando [OpenRedatam](https://github.com/litalbarkai/open-redatam), que tiene soporte para R, Python y CLI, pero no tiene soporte para los formatos de datos REDATAM más recientes.*
 
 ### Estructura del Formato Largo
 
@@ -124,7 +119,7 @@ LIMIT 10;
 
 ### Trabajo con Datos en Python
 
-Para trabajar con los datos en Python y convertirlos a formatos geográficos:
+**Recomendación**: En mi experiencia, la forma más fácil de extraer estos datos de Parquet a un formato geoespacial fácil de usar es procesarlos con una combinación de DuckDB y Python, usándolos como archivo temporal, y deserializar el well-known binary a geoseries, convirtiéndolo a geodataframe en Python. Esta es mi recomendación para trabajar con ellos y obtener un archivo geoparquet local, pero estoy abierto a mejoras y documentación adicional.
 
 ```python
 import duckdb
