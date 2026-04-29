@@ -38,6 +38,35 @@ provincias <- tribble(
   26, "Santa Cruz"
 )
 
+# Mapping Base B IDPROV → Redatam provin_ref_id (matched by province name)
+baseb_to_redatam <- tribble(
+  ~idprov, ~provin_ref_id,
+  1, 17,   # Salta
+  2, 2,    # Buenos Aires
+  3, 1,    # CABA / Capital Federal
+  4, 19,   # San Luis
+  5, 8,    # Entre Ríos
+  6, 12,   # La Rioja
+  7, 22,   # Santiago del Estero
+  8, 6,    # Chaco
+  10, 18,  # San Juan
+  11, 3,   # Catamarca
+  12, 11,  # La Pampa
+  13, 13,  # Mendoza
+  14, 14,  # Misiones
+  16, 9,   # Formosa
+  17, 15,  # Neuquén
+  18, 16,  # Río Negro
+  19, 21,  # Santa Fe
+  20, 23,  # Tucumán
+  21, 7,   # Chubut
+  22, 24,  # Tierra del Fuego
+  23, 5,   # Corrientes
+  24, 4,   # Córdoba
+  25, 10,  # Jujuy
+  26, 20   # Santa Cruz
+)
+
 # ============================================================================
 # Variable labels (mapping Base B names → ARG1991 label files)
 # ============================================================================
@@ -148,7 +177,28 @@ load_labels <- function() {
 
 cat("Loading category labels from ARG1991...\n")
 category_labels <- load_labels()
-cat("  Loaded", nrow(category_labels), "label mappings\n\n")
+cat("  Loaded", nrow(category_labels), "label mappings\n")
+
+# Load department lookup from ARG1991 Redatam extract
+cat("Loading department names from ARG1991...\n")
+departamentos_raw <- read_delim(
+  "data/ARG1991/depto.csv",
+  delim = ";",
+  show_col_types = FALSE,
+  locale = locale(encoding = "UTF-8")
+)
+departamentos <- departamentos_raw %>%
+  # Join with mapping to get Base B IDPROV
+  left_join(baseb_to_redatam, by = "provin_ref_id") %>%
+  mutate(
+    # Convert 3-digit string to integer for matching with IDDPTO
+    iddpto = as.integer(depto),
+    # Fix encoding in department names
+    nombdepto = fix_encoding(nombdepto)
+  ) %>%
+  select(idprov, iddpto, nombdepto) %>%
+  filter(!is.na(idprov))
+cat("  Loaded", nrow(departamentos), "department names\n\n")
 
 # ============================================================================
 # STEP 1: Initialize DuckDB and Load Data
@@ -156,6 +206,7 @@ cat("  Loaded", nrow(category_labels), "label mappings\n\n")
 cat("STEP 1: Initializing DuckDB and loading full census data...\n")
 
 con <- dbConnect(duckdb())
+dbExecute(con, "SET memory_limit = '48GB'")
 
 cat("  [", elapsed(), "m] Loading PERSONAS (32.6M rows)...\n", sep = "")
 dbExecute(con, "
@@ -250,10 +301,10 @@ process_variable <- function(con, var_name, entity) {
         ) as id_geo,
         CAST(IDPROV AS INTEGER) as idprov,
         CAST(IDDPTO AS INTEGER) as iddpto,
-        CAST(IDFRAC AS INTEGER) as idfrac,
-        CAST(IDRADIO AS INTEGER) as idradio,
+        LPAD(CAST(IDFRAC AS VARCHAR), 2, '0') as idfrac,
+        LPAD(CAST(IDRADIO AS VARCHAR), 2, '0') as idradio,
         COALESCE(CAST(%s AS VARCHAR), 'Sin dato') as valor_categoria,
-        COUNT(*) as conteo
+        CAST(COUNT(*) AS BIGINT) as conteo
       FROM %s
       GROUP BY IDPROV, IDDPTO, IDFRAC, IDRADIO, %s
     ", var_name, table_name, var_name)
@@ -338,96 +389,96 @@ for (var_name in vivienda_vars) {
 cat("  [", elapsed(), "m] ✓ VIVIENDA complete\n\n", sep = "")
 
 # ============================================================================
-# STEP 4: Combine Parquet Files
+# STEP 4: Combine and Write Final Output (all in DuckDB - no R memory)
 # ============================================================================
-cat("STEP 4: Combining parquet files...\n")
+cat("STEP 4: Combining and writing final output via DuckDB...\n")
+
+# Free memory: drop source tables no longer needed
+cat("  Dropping source tables to free memory...\n")
+dbExecute(con, "DROP TABLE IF EXISTS persona")
+dbExecute(con, "DROP TABLE IF EXISTS hogar")
+dbExecute(con, "DROP TABLE IF EXISTS vivienda")
 
 parquet_files <- list.files(temp_dir, pattern = "\\.parquet$", full.names = TRUE)
 cat("  Found", length(parquet_files), "parquet files\n")
 
-all_data <- map_df(parquet_files, read_parquet)
-cat("  [", elapsed(), "m] Combined: ", format(nrow(all_data), big.mark = ","), " rows\n\n", sep = "")
+# Load lookup tables into DuckDB
+dbWriteTable(con, "category_labels", category_labels, overwrite = TRUE)
+dbWriteTable(con, "departamentos", departamentos, overwrite = TRUE)
+dbWriteTable(con, "provincias", provincias, overwrite = TRUE)
+dbWriteTable(con, "var_label_map_tbl", var_label_map, overwrite = TRUE)
 
-# ============================================================================
-# STEP 5: Write Final Output
-# ============================================================================
-cat("STEP 5: Writing final output...\n")
+# Load all temp parquets into DuckDB (not R memory)
+dbExecute(con, sprintf("
+  CREATE TABLE all_data AS
+  SELECT * FROM read_parquet('%s/*.parquet')
+", temp_dir))
 
-censo_1991_largo <- all_data %>%
-  rename(
-    valor_provincia = idprov,
-    etiqueta_provincia = nomprov,
-    valor_departamento = iddpto,
-    valor_fraccion = idfrac,
-    valor_radio = idradio
-  ) %>%
-  # Drop the NA etiqueta_categoria and join proper labels
-  select(-etiqueta_categoria) %>%
-  left_join(category_labels, by = c("codigo_variable", "valor_categoria")) %>%
-  mutate(
-    etiqueta_departamento = NA_character_,
-    # Fallback: use valor_categoria as label if no label found
-    etiqueta_categoria = coalesce(etiqueta_categoria, valor_categoria)
-  ) %>%
-  select(id_geo, valor_provincia, etiqueta_provincia,
-         valor_departamento, etiqueta_departamento,
-         valor_fraccion, valor_radio,
-         codigo_variable, valor_categoria, etiqueta_categoria, conteo) %>%
-  # Sort by id_geo for geographic clustering
+row_count <- dbGetQuery(con, "SELECT COUNT(*) as n FROM all_data")$n
+cat("  [", elapsed(), "m] Combined: ", format(row_count, big.mark = ","), " rows\n", sep = "")
 
-  arrange(id_geo)
-
-# Write with optimizations:
-# - Sorted by id_geo (geographic clustering)
-# - ~1M rows per row group
-# - ZSTD compression
-# - Dictionary encoding on categorical columns
-# - Statistics enabled (default)
-write_parquet(
-  censo_1991_largo,
-  "censo_1991_largo.parquet",
-  compression = "zstd",
-  chunk_size = 1000000L,
-  use_dictionary = TRUE,
-  write_statistics = TRUE
-)
+# Write censo_1991_largo.parquet directly from DuckDB
+# Note: Use PRINTF to format integers - R tribbles write numerics as DOUBLE,
+# and CAST(double AS VARCHAR) produces "1." instead of "1"
+dbExecute(con, "
+  COPY (
+    SELECT
+      d.id_geo,
+      PRINTF('%02d', CAST(d.idprov AS INTEGER)) AS valor_provincia,
+      p.nomprov AS etiqueta_provincia,
+      PRINTF('%03d', CAST(d.iddpto AS INTEGER)) AS valor_departamento,
+      COALESCE(dept.nombdepto, 'Sin dato') AS etiqueta_departamento,
+      d.idfrac AS valor_fraccion,
+      d.idradio AS valor_radio,
+      d.codigo_variable,
+      d.valor_categoria,
+      COALESCE(c.etiqueta_categoria, d.valor_categoria) AS etiqueta_categoria,
+      CAST(d.conteo AS BIGINT) AS conteo
+    FROM all_data d
+    LEFT JOIN provincias p ON CAST(d.idprov AS INTEGER) = p.idprov
+    LEFT JOIN departamentos dept ON CAST(d.idprov AS INTEGER) = dept.idprov
+                                AND CAST(d.iddpto AS INTEGER) = dept.iddpto
+    LEFT JOIN category_labels c ON d.codigo_variable = c.codigo_variable
+                                AND d.valor_categoria = c.valor_categoria
+    ORDER BY d.id_geo
+  ) TO 'censo_1991_largo.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 1000000)
+")
 file_size <- round(file.info("censo_1991_largo.parquet")$size / 1024^2, 1)
 cat("  [", elapsed(), "m] ✓ censo_1991_largo.parquet (", file_size, " MB)\n", sep = "")
 
-# Build metadata with proper labels
-censo_1991_metadatos <- censo_1991_largo %>%
-  select(codigo_variable, valor_categoria) %>%
-  distinct() %>%
-  # Join category labels
-  left_join(category_labels, by = c("codigo_variable", "valor_categoria")) %>%
-  # Join variable labels
-  left_join(var_label_map %>% select(codigo_variable, etiqueta_variable),
-            by = "codigo_variable") %>%
-  mutate(
-    entidad = str_extract(codigo_variable, "^[^_]+"),
-    nombre_variable = str_extract(codigo_variable, "[^_]+$"),
-    # Fallback: use valor_categoria as label if no label found
-    etiqueta_categoria = coalesce(etiqueta_categoria, valor_categoria),
-    # Fallback: use nombre_variable if no etiqueta_variable
-    etiqueta_variable = coalesce(etiqueta_variable, nombre_variable)
-  ) %>%
-  select(valor_categoria, etiqueta_categoria, codigo_variable,
-         nombre_variable, etiqueta_variable, entidad)
-
-write_parquet(
-  censo_1991_metadatos,
-  "censo_1991_metadatos.parquet",
-  compression = "zstd",
-  use_dictionary = TRUE,
-  write_statistics = TRUE
-)
+# Write metadata parquet
+dbExecute(con, "
+  COPY (
+    SELECT DISTINCT
+      d.valor_categoria,
+      COALESCE(c.etiqueta_categoria, d.valor_categoria) AS etiqueta_categoria,
+      d.codigo_variable,
+      SPLIT_PART(d.codigo_variable, '_', 2) AS nombre_variable,
+      COALESCE(v.etiqueta_variable, SPLIT_PART(d.codigo_variable, '_', 2)) AS etiqueta_variable,
+      SPLIT_PART(d.codigo_variable, '_', 1) AS entidad
+    FROM all_data d
+    LEFT JOIN category_labels c ON d.codigo_variable = c.codigo_variable
+                                AND d.valor_categoria = c.valor_categoria
+    LEFT JOIN var_label_map_tbl v ON d.codigo_variable = v.codigo_variable
+  ) TO 'censo_1991_metadatos.parquet' (FORMAT PARQUET, COMPRESSION ZSTD)
+")
 meta_size <- round(file.info("censo_1991_metadatos.parquet")$size / 1024^2, 1)
 cat("  [", elapsed(), "m] ✓ censo_1991_metadatos.parquet (", meta_size, " MB)\n\n", sep = "")
 
 # ============================================================================
-# STEP 6: Cleanup
+# STEP 5: Cleanup
 # ============================================================================
-cat("STEP 6: Cleanup...\n")
+cat("STEP 5: Cleanup...\n")
+
+# Get stats before closing connection
+final_stats <- dbGetQuery(con, "
+  SELECT
+    COUNT(*) as total_rows,
+    COUNT(DISTINCT codigo_variable) as unique_vars,
+    COUNT(DISTINCT id_geo) as unique_geos
+  FROM all_data
+")
+
 dbDisconnect(con, shutdown = TRUE)
 unlink(temp_dir, recursive = TRUE)
 cat("  ✓ Removed temp files and closed DuckDB\n\n")
@@ -441,10 +492,7 @@ cat("=== COMPLETE ===\n")
 cat("Output:\n")
 cat("  - censo_1991_largo.parquet (", file_size, " MB)\n", sep = "")
 cat("  - censo_1991_metadatos.parquet (", meta_size, " MB)\n", sep = "")
-cat("\nTotal rows: ", format(nrow(censo_1991_largo), big.mark = ","), "\n", sep = "")
-cat("Unique variables: ", n_distinct(censo_1991_largo$codigo_variable), "\n", sep = "")
-cat("Unique geographies: ", n_distinct(censo_1991_largo$id_geo), "\n", sep = "")
-cat("Total population (PERSONA_SEXO sum): ",
-    format(sum(censo_1991_largo$conteo[censo_1991_largo$codigo_variable == "PERSONA_SEXO"]), big.mark = ","),
-    "\n", sep = "")
+cat("\nTotal rows: ", format(final_stats$total_rows, big.mark = ","), "\n", sep = "")
+cat("Unique variables: ", final_stats$unique_vars, "\n", sep = "")
+cat("Unique geographies: ", final_stats$unique_geos, "\n", sep = "")
 cat("\nTotal time: ", total_time, " minutes\n", sep = "")

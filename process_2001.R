@@ -122,11 +122,103 @@ fix_spanish_encoding <- function(text) {
 }
 
 # ============================================================================
+# Variable Label Map: Human-readable Spanish names for all variables
+# ============================================================================
+var_label_map <- tribble(
+  ~codigo_variable, ~etiqueta_variable,
+  # PERSONA
+  "PERSONA_P1", "Parentesco",
+  "PERSONA_P2", "Sexo",
+  "PERSONA_P3", "Edad",
+  "PERSONA_P4", "Sabe leer y escribir",
+  "PERSONA_P5", "Usa computadora",
+  "PERSONA_P7A", "Lugar de nacimiento",
+  "PERSONA_P7PROV", "Provincia de nacimiento",
+  "PERSONA_P7PAIS", "País de nacimiento",
+  "PERSONA_P8A", "Residencia hace 5 años",
+  "PERSONA_P8PROV", "Provincia hace 5 años",
+  "PERSONA_P8PAIS", "País hace 5 años",
+  "PERSONA_P9A", "Trabaja en otro lugar",
+  "PERSONA_P9PROV", "Provincia de trabajo",
+  "PERSONA_P9PAIS", "País de trabajo",
+  "PERSONA_P19DIS", "Disciplina de estudio",
+  "PERSONA_P20", "Estado civil",
+  "PERSONA_P21", "Vive en pareja",
+  "PERSONA_P22", "Tiene hijos nacidos vivos",
+  "PERSONA_P295", "Calificación ocupacional",
+  "PERSONA_P36", "Tamaño del establecimiento",
+  "PERSONA_P37", "Aportes jubilatorios",
+  "PERSONA_P38T", "Horas trabajadas",
+  "PERSONA_P40", "Busca trabajo",
+  "PERSONA_CP1", "Tiene documento",
+  "PERSONA_CP3", "Asistencia escolar",
+  "PERSONA_CP4", "Nivel educativo",
+  "PERSONA_CP5", "Edad (menores de 5)",
+  "PERSONA_CP7", "Categoría ocupacional",
+  "PERSONA_CP9", "Descuento jubilatorio",
+  "PERSONA_CP12", "Años de estudio aprobados",
+  "PERSONA_CP63", "Condición de actividad",
+  "PERSONA_EDADAGRU", "Grupo de edad (3 grupos)",
+  "PERSONA_EDADQUI", "Grupo de edad quinquenal",
+  "PERSONA_RAMA2", "Rama de actividad (CIIU)",
+  "PERSONA_RAMA91", "Rama de actividad (1991)",
+  # HOGAR
+  "HOGAR_H1", "Cantidad de personas",
+  "HOGAR_H10", "Provisión de agua",
+  "HOGAR_CH6", "Tenencia de la vivienda",
+  "HOGAR_CH9", "Desagüe del inodoro",
+  "HOGAR_CH10", "Cocina",
+  "HOGAR_CH12", "Material de paredes",
+  "HOGAR_CH13", "Material de techos",
+  "HOGAR_CH14", "Condición ocupacional jefe/cónyuge",
+  "HOGAR_CH23", "Heladera",
+  "HOGAR_CH24", "Lavarropas",
+  "HOGAR_CH25", "Teléfono",
+  "HOGAR_CH26", "Computadora e internet",
+  "HOGAR_CH28", "Calidad de materiales (CALMAT)",
+  "HOGAR_CH33", "Privación material",
+  "HOGAR_CH51", "Ingreso total del hogar",
+  "HOGAR_CH82", "Tipo de hogar",
+  "HOGAR_CHNBI", "Necesidades básicas insatisfechas",
+  "HOGAR_CHNBI1", "NBI: Vivienda inconveniente",
+  "HOGAR_CHNBI2", "NBI: Condiciones sanitarias",
+  "HOGAR_CHNBI3", "NBI: Hacinamiento",
+  "HOGAR_CHNBI4", "NBI: Inasistencia escolar",
+  "HOGAR_CHNBI5", "NBI: Capacidad de subsistencia",
+  "HOGAR_HACIAGRU", "Hacinamiento (personas por cuarto)",
+  # VIVIENDA
+  "VIVIENDA_TIPOVIV", "Tipo de relevamiento",
+  "VIVIENDA_URP", "Área urbana/rural",
+  "VIVIENDA_V0T", "Motivo vivienda desocupada",
+  "VIVIENDA_V4", "Tipo de vivienda",
+  "VIVIENDA_CV12", "Material de paredes",
+  "VIVIENDA_CV13", "Material de techos",
+  "VIVIENDA_CV94", "Viviendas 1994",
+  "VIVIENDA_CV94RA", "Radios 1994",
+  "VIVIENDA_CV951", "Segmento 1995",
+  "VIVIENDA_CV952", "Vivienda 1995",
+  "VIVIENDA_CC4", "Cobertura: entrevista completa",
+  "VIVIENDA_CC5", "Cobertura: rechazo",
+  "VIVIENDA_CC6", "Cobertura: ausencia",
+  "VIVIENDA_CC7", "Cobertura: otra causa",
+  "VIVIENDA_CC9", "Cobertura: vivienda desocupada",
+  "VIVIENDA_CC10", "Cobertura: uso no habitacional",
+  "VIVIENDA_CC11", "Cobertura: en construcción",
+  "VIVIENDA_CC12", "Cobertura: demolida",
+  "VIVIENDA_LOC", "Código de localidad",
+  "VIVIENDA_MUNI", "Código de municipio",
+  "VIVIENDA_AGLO", "Código de aglomerado",
+  "VIVIENDA_CANTPERS", "Cantidad de personas",
+  "VIVIENDA_CANTHOG", "Cantidad de hogares"
+)
+
+# ============================================================================
 # STEP 1: Initialize DuckDB and Load Data
 # ============================================================================
 cat("STEP 1: Initializing DuckDB...\n")
 
 con <- dbConnect(duckdb())
+dbExecute(con, "SET memory_limit = '48GB'")
 
 cat("  [", elapsed(), "m] Loading CSVs into DuckDB...\n", sep = "")
 
@@ -138,6 +230,17 @@ dbExecute(con, "
   CREATE TABLE dpto AS
   SELECT * FROM read_csv_auto('data/ARG2001/dpto.csv', delim=';')
 ")
+
+# Fix encoding in province/department names (do it once here, not on 25M rows later)
+prov_df <- dbGetQuery(con, "SELECT * FROM prov")
+prov_df$nomprov <- fix_spanish_encoding(prov_df$nomprov)
+dbExecute(con, "DROP TABLE prov")
+dbWriteTable(con, "prov", prov_df)
+
+dpto_df <- dbGetQuery(con, "SELECT * FROM dpto")
+dpto_df$nomdepto <- fix_spanish_encoding(dpto_df$nomdepto)
+dbExecute(con, "DROP TABLE dpto")
+dbWriteTable(con, "dpto", dpto_df)
 dbExecute(con, "
   CREATE TABLE frac AS
   SELECT * FROM read_csv_auto('data/ARG2001/frac.csv', delim=';')
@@ -229,6 +332,14 @@ all_labels <- bind_rows(labels_list) %>%
   distinct(codigo_variable, valor_categoria, .keep_all = TRUE)
 
 all_labels$etiqueta_categoria <- fix_spanish_encoding(all_labels$etiqueta_categoria)
+
+# Replace English labels with Spanish
+all_labels <- all_labels %>%
+  mutate(etiqueta_categoria = case_when(
+    etiqueta_categoria == "NOTAPPLICABLE" ~ "No aplica",
+    etiqueta_categoria == "MISSING" ~ "Sin dato",
+    TRUE ~ etiqueta_categoria
+  ))
 
 cat("  [", elapsed(), "m] ✓ Parsed labels for ", n_distinct(all_labels$codigo_variable), " variables\n\n", sep = "")
 
@@ -412,56 +523,69 @@ for (var_name in vivienda_vars) {
 cat("  [", elapsed(), "m] ✓ VIVIENDA complete\n\n", sep = "")
 
 # ============================================================================
-# STEP 6: Combine Parquet Files
+# STEP 6: Combine and Write Final Output (all in DuckDB)
 # ============================================================================
-cat("STEP 6: Combining parquet files...\n")
+cat("STEP 6: Writing final output via DuckDB...\n")
+
+# Free memory: drop source tables no longer needed
+cat("  Dropping source tables to free memory...\n")
+dbExecute(con, "DROP TABLE IF EXISTS persona")
+dbExecute(con, "DROP TABLE IF EXISTS hogar")
+dbExecute(con, "DROP TABLE IF EXISTS vivienda")
+dbExecute(con, "DROP TABLE IF EXISTS seg")
+dbExecute(con, "DROP VIEW IF EXISTS geo_lookup")
 
 parquet_files <- list.files(temp_dir, pattern = "\\.parquet$", full.names = TRUE)
 cat("  Found", length(parquet_files), "parquet files\n")
 
-all_data <- map_df(parquet_files, read_parquet)
-cat("  [", elapsed(), "m] Combined: ", format(nrow(all_data), big.mark = ","), " rows\n\n", sep = "")
+# Load all temp parquets into DuckDB
+dbExecute(con, sprintf("
+  CREATE TABLE all_data AS
+  SELECT * FROM read_parquet('%s/*.parquet')
+", temp_dir))
 
-# ============================================================================
-# STEP 7: Write Final Output
-# ============================================================================
-cat("STEP 7: Writing final output...\n")
+row_count <- dbGetQuery(con, "SELECT COUNT(*) as n FROM all_data")$n
+cat("  [", elapsed(), "m] Combined: ", format(row_count, big.mark = ","), " rows\n", sep = "")
 
-censo_2001_largo <- all_data %>%
-  rename(
-    valor_provincia = idprov,
-    etiqueta_provincia = nomprov,
-    valor_departamento = iddpto,
-    etiqueta_departamento = nomdpto,
-    valor_fraccion = idfrac,
-    valor_radio = idradio
-  ) %>%
-  select(id_geo, valor_provincia, etiqueta_provincia,
-         valor_departamento, etiqueta_departamento,
-         valor_fraccion, valor_radio,
-         codigo_variable, valor_categoria, etiqueta_categoria, conteo)
-
-write_parquet(censo_2001_largo, "censo_2001_largo.parquet", compression = "zstd")
+# Write censo_2001_largo.parquet directly from DuckDB
+dbExecute(con, "
+  COPY (
+    SELECT
+      id_geo,
+      idprov AS valor_provincia,
+      nomprov AS etiqueta_provincia,
+      iddpto AS valor_departamento,
+      nomdpto AS etiqueta_departamento,
+      idfrac AS valor_fraccion,
+      idradio AS valor_radio,
+      codigo_variable,
+      valor_categoria,
+      COALESCE(etiqueta_categoria, valor_categoria) AS etiqueta_categoria,
+      CAST(conteo AS BIGINT) AS conteo
+    FROM all_data
+    ORDER BY id_geo
+  ) TO 'censo_2001_largo.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 1000000)
+")
 file_size <- round(file.info("censo_2001_largo.parquet")$size / 1024^2, 1)
 cat("  [", elapsed(), "m] ✓ censo_2001_largo.parquet (", file_size, " MB)\n", sep = "")
 
-# Metadata
-variable_descriptions <- all_labels %>%
-  distinct(codigo_variable) %>%
-  mutate(
-    entidad = str_extract(codigo_variable, "^[^_]+"),
-    nombre_variable = str_extract(codigo_variable, "[^_]+$"),
-    etiqueta_variable = nombre_variable
-  )
+# Register var_label_map in DuckDB for metadata join
+dbWriteTable(con, "var_label_map", var_label_map, overwrite = TRUE)
 
-censo_2001_metadatos <- censo_2001_largo %>%
-  select(codigo_variable, valor_categoria, etiqueta_categoria) %>%
-  distinct() %>%
-  left_join(variable_descriptions, by = "codigo_variable") %>%
-  select(valor_categoria, etiqueta_categoria,
-         codigo_variable, nombre_variable, etiqueta_variable, entidad)
-
-write_parquet(censo_2001_metadatos, "censo_2001_metadatos.parquet", compression = "zstd")
+# Write metadata parquet
+dbExecute(con, "
+  COPY (
+    SELECT DISTINCT
+      d.valor_categoria,
+      COALESCE(d.etiqueta_categoria, d.valor_categoria) AS etiqueta_categoria,
+      d.codigo_variable,
+      SPLIT_PART(d.codigo_variable, '_', 2) AS nombre_variable,
+      COALESCE(v.etiqueta_variable, SPLIT_PART(d.codigo_variable, '_', 2)) AS etiqueta_variable,
+      SPLIT_PART(d.codigo_variable, '_', 1) AS entidad
+    FROM all_data d
+    LEFT JOIN var_label_map v ON d.codigo_variable = v.codigo_variable
+  ) TO 'censo_2001_metadatos.parquet' (FORMAT PARQUET, COMPRESSION ZSTD)
+")
 meta_size <- round(file.info("censo_2001_metadatos.parquet")$size / 1024^2, 1)
 cat("  [", elapsed(), "m] ✓ censo_2001_metadatos.parquet (", meta_size, " MB)\n\n", sep = "")
 
@@ -469,6 +593,16 @@ cat("  [", elapsed(), "m] ✓ censo_2001_metadatos.parquet (", meta_size, " MB)\
 # STEP 8: Cleanup
 # ============================================================================
 cat("STEP 8: Cleanup...\n")
+
+# Get stats before closing connection
+final_stats <- dbGetQuery(con, "
+  SELECT
+    COUNT(*) as total_rows,
+    COUNT(DISTINCT codigo_variable) as unique_vars,
+    COUNT(DISTINCT id_geo) as unique_geos
+  FROM all_data
+")
+
 dbDisconnect(con, shutdown = TRUE)
 unlink(temp_dir, recursive = TRUE)
 cat("  ✓ Removed temp files and closed DuckDB\n\n")
@@ -482,7 +616,7 @@ cat("=== COMPLETE ===\n")
 cat("Output:\n")
 cat("  - censo_2001_largo.parquet (", file_size, " MB)\n", sep = "")
 cat("  - censo_2001_metadatos.parquet (", meta_size, " MB)\n", sep = "")
-cat("\nTotal rows: ", format(nrow(censo_2001_largo), big.mark = ","), "\n", sep = "")
-cat("Unique variables: ", n_distinct(censo_2001_largo$codigo_variable), "\n", sep = "")
-cat("Unique geographies: ", n_distinct(censo_2001_largo$id_geo), "\n", sep = "")
+cat("\nTotal rows: ", format(final_stats$total_rows, big.mark = ","), "\n", sep = "")
+cat("Unique variables: ", final_stats$unique_vars, "\n", sep = "")
+cat("Unique geographies: ", final_stats$unique_geos, "\n", sep = "")
 cat("\nTotal time: ", total_time, " minutes\n", sep = "")
